@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, text
 
 
 # =========================================================
-# PAGE CONFIGURATION
+# 1. PAGE CONFIGURATION
 # =========================================================
 
 st.set_page_config(
@@ -18,15 +18,13 @@ st.set_page_config(
 
 
 # =========================================================
-# STYLING
+# 2. DARK THEME + SCENIC HERO
 # =========================================================
 
 st.markdown("""
 <style>
 .stApp {
-    background: linear-gradient(
-        180deg, #071525 0%, #091a2b 48%, #061321 100%
-    );
+    background: linear-gradient(180deg, #071525 0%, #091a2b 48%, #061321 100%);
     color: #f4f7ff;
 }
 [data-testid="stSidebar"] {
@@ -124,41 +122,48 @@ h1, h2, h3 { color: #f8fafc; }
 
 
 # =========================================================
-# SETTINGS AND DATABASE CONNECTION
+# 3. APP SETTINGS
 # =========================================================
 
-def setting(key):
+def get_setting(key):
     try:
-        return st.secrets.get(key, os.getenv(key, ""))
+        value = st.secrets.get(key, "")
+        if value:
+            return str(value)
     except Exception:
-        return os.getenv(key, "")
+        pass
+
+    return os.getenv(key, "")
 
 
-APP_PASSWORD = setting("APP_PASSWORD")
-DATABASE_URL = setting("DATABASE_URL")
+APP_PASSWORD = get_setting("APP_PASSWORD")
+DATABASE_URL = get_setting("DATABASE_URL")
 
 if not APP_PASSWORD or not DATABASE_URL:
     st.error(
-        "Configure APP_PASSWORD and DATABASE_URL "
-        "in your Streamlit app Secrets."
+        "Missing configuration. Add APP_PASSWORD and DATABASE_URL "
+        "in Streamlit app Secrets."
     )
     st.stop()
 
 
-# Support PostgreSQL connection URL formats.
+# Convert PostgreSQL URL to the psycopg SQLAlchemy driver.
 if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL[len("postgres://"):]
-
+    DATABASE_URL = (
+        "postgresql+psycopg://"
+        + DATABASE_URL[len("postgres://"):]
+    )
 elif DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = (
-        "postgresql+psycopg://" + DATABASE_URL[len("postgresql://"):]
+        "postgresql+psycopg://"
+        + DATABASE_URL[len("postgresql://"):]
     )
 
 
 @st.cache_resource
-def get_engine(url):
+def get_engine(database_url):
     return create_engine(
-        url,
+        database_url,
         pool_pre_ping=True,
         pool_recycle=1800,
     )
@@ -167,6 +172,7 @@ def get_engine(url):
 try:
     engine = get_engine(DATABASE_URL)
 
+    # Create the table if it does not already exist.
     with engine.begin() as conn:
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS work_entries (
@@ -188,14 +194,16 @@ try:
             )
         """))
 
-except Exception as exc:
-    st.error("Could not connect to the database. Check DATABASE_URL.")
-    st.exception(exc)
+except Exception:
+    st.error(
+        "Database connection failed. Check your existing "
+        "DATABASE_URL and the Streamlit app logs."
+    )
     st.stop()
 
 
 # =========================================================
-# CONSTANTS
+# 4. CONSTANTS
 # =========================================================
 
 CATEGORIES = [
@@ -218,9 +226,25 @@ STATUSES = [
     "To Do",
 ]
 
+ENTRY_FIELDS = [
+    "work_date",
+    "category",
+    "title",
+    "description",
+    "outcome",
+    "skills",
+    "hours",
+    "status",
+    "github_url",
+    "demo_url",
+    "ppt_url",
+    "linkedin_url",
+    "next_step",
+]
+
 
 # =========================================================
-# DATABASE FUNCTIONS
+# 5. DATABASE READ FUNCTION
 # =========================================================
 
 def get_data(category=None, search=""):
@@ -256,24 +280,87 @@ def get_data(category=None, search=""):
         return pd.DataFrame(result.mappings().all())
 
 
+# =========================================================
+# 6. DATABASE INSERT / UPDATE FUNCTION
+# =========================================================
+
 def save_entry(values, entry_id=None):
+    """
+    Insert or update an entry.
+    Build the parameters explicitly so SQL placeholders
+    and supplied values always match.
+    """
+
+    data = {
+        field: values.get(field)
+        for field in ENTRY_FIELDS
+    }
+
+    # Normalize optional text fields.
+    text_fields = [
+        "description",
+        "outcome",
+        "skills",
+        "github_url",
+        "demo_url",
+        "ppt_url",
+        "linkedin_url",
+        "next_step",
+    ]
+
+    for field in text_fields:
+        data[field] = data[field] or ""
+
+    data["title"] = (data["title"] or "").strip()
+
+    if not data["title"]:
+        raise ValueError("Work title cannot be empty.")
+
+    if data["category"] not in CATEGORIES:
+        raise ValueError("Invalid category.")
+
+    if data["status"] not in STATUSES:
+        raise ValueError("Invalid status.")
+
+    # Use separate SQL statements for inserts and updates.
     if entry_id is None:
-        sql = """
+        sql = text("""
             INSERT INTO work_entries (
-                work_date, category, title, description,
-                outcome, skills, hours, status,
-                github_url, demo_url, ppt_url,
-                linkedin_url, next_step
+                work_date,
+                category,
+                title,
+                description,
+                outcome,
+                skills,
+                hours,
+                status,
+                github_url,
+                demo_url,
+                ppt_url,
+                linkedin_url,
+                next_step
             )
             VALUES (
-                :work_date, :category, :title, :description,
-                :outcome, :skills, :hours, :status,
-                :github_url, :demo_url, :ppt_url,
-                :linkedin_url, :next_step
+                :work_date,
+                :category,
+                :title,
+                :description,
+                :outcome,
+                :skills,
+                :hours,
+                :status,
+                :github_url,
+                :demo_url,
+                :ppt_url,
+                :linkedin_url,
+                :next_step
             )
-        """
+        """)
+
     else:
-        sql = """
+        data["id"] = int(entry_id)
+
+        sql = text("""
             UPDATE work_entries SET
                 work_date = :work_date,
                 category = :category,
@@ -289,12 +376,15 @@ def save_entry(values, entry_id=None):
                 linkedin_url = :linkedin_url,
                 next_step = :next_step
             WHERE id = :id
-        """
-        values["id"] = int(entry_id)
+        """)
 
     with engine.begin() as conn:
-        conn.execute(text(sql), values)
+        conn.execute(sql, data)
 
+
+# =========================================================
+# 7. DATABASE DELETE FUNCTION
+# =========================================================
 
 def delete_entry(entry_id):
     with engine.begin() as conn:
@@ -305,15 +395,20 @@ def delete_entry(entry_id):
 
 
 # =========================================================
-# DISPLAY HELPERS
+# 8. LINK DISPLAY HELPER
 # =========================================================
 
 def show_link(label, url):
-    if isinstance(url, str) and url.strip().startswith(
-        ("https://", "http://")
-    ):
-        st.markdown(f"[{label} ↗]({url.strip()})")
+    if isinstance(url, str):
+        clean_url = url.strip()
 
+        if clean_url.startswith(("https://", "http://")):
+            st.markdown(f"[{label} ↗]({clean_url})")
+
+
+# =========================================================
+# 9. ENTRY DISPLAY AND OWNER EDITING
+# =========================================================
 
 def display_entry(row, allow_edit=False):
     with st.container(border=True):
@@ -333,8 +428,9 @@ def display_entry(row, allow_edit=False):
         if row.get("skills"):
             st.write(f"**Skills / Tools:** {row['skills']}")
 
-        if row.get("hours") is not None and pd.notna(row.get("hours")):
-            st.write(f"**Hours spent:** {row['hours']}")
+        hours_value = row.get("hours")
+        if hours_value is not None and pd.notna(hours_value):
+            st.write(f"**Hours spent:** {hours_value}")
 
         show_link("GitHub", row.get("github_url"))
         show_link("Live Project", row.get("demo_url"))
@@ -344,146 +440,157 @@ def display_entry(row, allow_edit=False):
         if row.get("next_step"):
             st.write(f"**Next step:** {row['next_step']}")
 
-        if allow_edit:
-            with st.expander("✏️ Edit or delete this entry"):
-                date_value = row["work_date"]
+        if not allow_edit:
+            return
 
-                if isinstance(date_value, str):
-                    date_value = date.fromisoformat(date_value[:10])
-                elif hasattr(date_value, "date"):
-                    date_value = date_value.date()
+        entry_id = int(row["id"])
 
-                with st.form(f"edit_form_{row['id']}"):
-                    edit_date = st.date_input(
-                        "Date",
-                        value=date_value,
-                        key=f"date_{row['id']}",
-                    )
+        with st.expander("✏️ Edit or delete this entry"):
+            entry_date = row["work_date"]
 
-                    edit_category = st.selectbox(
-                        "Category",
-                        CATEGORIES,
-                        index=(
-                            CATEGORIES.index(row["category"])
-                            if row["category"] in CATEGORIES else 0
-                        ),
-                        key=f"category_{row['id']}",
-                    )
+            if isinstance(entry_date, str):
+                entry_date = date.fromisoformat(entry_date[:10])
+            elif hasattr(entry_date, "date"):
+                entry_date = entry_date.date()
 
-                    edit_title = st.text_input(
-                        "Work title",
-                        value=row["title"] or "",
-                        key=f"title_{row['id']}",
-                    )
+            current_category = row["category"]
+            if current_category not in CATEGORIES:
+                current_category = "Other"
 
-                    edit_description = st.text_area(
-                        "Tasks / notes",
-                        value=row["description"] or "",
-                        key=f"description_{row['id']}",
-                    )
+            current_status = row["status"]
+            if current_status not in STATUSES:
+                current_status = "Completed"
 
-                    edit_outcome = st.text_area(
-                        "Achievement / result",
-                        value=row["outcome"] or "",
-                        key=f"outcome_{row['id']}",
-                    )
+            current_hours = row.get("hours")
+            if current_hours is None or pd.isna(current_hours):
+                current_hours = 0.0
 
-                    edit_skills = st.text_input(
-                        "Tools / skills",
-                        value=row["skills"] or "",
-                        key=f"skills_{row['id']}",
-                    )
+            with st.form(f"edit_form_{entry_id}"):
+                edit_date = st.date_input(
+                    "Date",
+                    value=entry_date,
+                    key=f"edit_date_{entry_id}",
+                )
 
-                    current_hours = row.get("hours")
-                    if current_hours is None or pd.isna(current_hours):
-                        current_hours = 0.0
+                edit_category = st.selectbox(
+                    "Category",
+                    CATEGORIES,
+                    index=CATEGORIES.index(current_category),
+                    key=f"edit_category_{entry_id}",
+                )
 
-                    edit_hours = st.number_input(
-                        "Hours spent",
-                        min_value=0.0,
-                        max_value=24.0,
-                        step=0.5,
-                        value=float(current_hours),
-                        key=f"hours_{row['id']}",
-                    )
+                edit_title = st.text_input(
+                    "Work title *",
+                    value=row["title"] or "",
+                    key=f"edit_title_{entry_id}",
+                )
 
-                    edit_status = st.selectbox(
-                        "Status",
-                        STATUSES,
-                        index=(
-                            STATUSES.index(row["status"])
-                            if row["status"] in STATUSES else 0
-                        ),
-                        key=f"status_{row['id']}",
-                    )
+                edit_description = st.text_area(
+                    "Tasks / notes",
+                    value=row["description"] or "",
+                    key=f"edit_description_{entry_id}",
+                )
 
-                    edit_github = st.text_input(
-                        "GitHub URL",
-                        value=row["github_url"] or "",
-                        key=f"github_{row['id']}",
-                    )
+                edit_outcome = st.text_area(
+                    "Achievement / result",
+                    value=row["outcome"] or "",
+                    key=f"edit_outcome_{entry_id}",
+                )
 
-                    edit_demo = st.text_input(
-                        "Live project URL",
-                        value=row["demo_url"] or "",
-                        key=f"demo_{row['id']}",
-                    )
+                edit_skills = st.text_input(
+                    "Tools / skills",
+                    value=row["skills"] or "",
+                    key=f"edit_skills_{entry_id}",
+                )
 
-                    edit_ppt = st.text_input(
-                        "PPT / document URL",
-                        value=row["ppt_url"] or "",
-                        key=f"ppt_{row['id']}",
-                    )
+                edit_hours = st.number_input(
+                    "Hours spent",
+                    min_value=0.0,
+                    max_value=24.0,
+                    value=float(current_hours),
+                    step=0.5,
+                    key=f"edit_hours_{entry_id}",
+                )
 
-                    edit_linkedin = st.text_input(
-                        "LinkedIn post URL",
-                        value=row["linkedin_url"] or "",
-                        key=f"linkedin_{row['id']}",
-                    )
+                edit_status = st.selectbox(
+                    "Status",
+                    STATUSES,
+                    index=STATUSES.index(current_status),
+                    key=f"edit_status_{entry_id}",
+                )
 
-                    edit_next_step = st.text_input(
-                        "Next priority",
-                        value=row["next_step"] or "",
-                        key=f"next_{row['id']}",
-                    )
+                edit_github = st.text_input(
+                    "GitHub URL",
+                    value=row["github_url"] or "",
+                    key=f"edit_github_{entry_id}",
+                )
 
-                    update = st.form_submit_button("💾 Save Changes")
+                edit_demo = st.text_input(
+                    "Live project URL",
+                    value=row["demo_url"] or "",
+                    key=f"edit_demo_{entry_id}",
+                )
 
-                if update:
-                    if not edit_title.strip():
-                        st.error("Please enter a work title.")
+                edit_ppt = st.text_input(
+                    "PPT / document URL",
+                    value=row["ppt_url"] or "",
+                    key=f"edit_ppt_{entry_id}",
+                )
+
+                edit_linkedin = st.text_input(
+                    "LinkedIn post URL",
+                    value=row["linkedin_url"] or "",
+                    key=f"edit_linkedin_{entry_id}",
+                )
+
+                edit_next_step = st.text_input(
+                    "Next priority",
+                    value=row["next_step"] or "",
+                    key=f"edit_next_step_{entry_id}",
+                )
+
+                update_clicked = st.form_submit_button(
+                    "💾 Save Changes",
+                    type="primary",
+                )
+
+            if update_clicked:
+                if not edit_title.strip():
+                    st.error("Please enter a work title.")
+                else:
+                    edit_links = [
+                        edit_github,
+                        edit_demo,
+                        edit_ppt,
+                        edit_linkedin,
+                    ]
+
+                    invalid_links = [
+                        link.strip()
+                        for link in edit_links
+                        if link.strip()
+                        and not link.strip().startswith(
+                            ("https://", "http://")
+                        )
+                    ]
+
+                    if invalid_links:
+                        st.error(
+                            "Links must start with https:// or http://"
+                        )
                     else:
-                        links = [
-                            edit_github,
-                            edit_demo,
-                            edit_ppt,
-                            edit_linkedin,
-                        ]
-
-                        invalid_links = [
-                            link.strip()
-                            for link in links
-                            if link.strip()
-                            and not link.strip().startswith(
-                                ("https://", "http://")
-                            )
-                        ]
-
-                        if invalid_links:
-                            st.error(
-                                "Every link must start with "
-                                "https:// or http://"
-                            )
-                        else:
+                        try:
                             save_entry(
                                 {
                                     "work_date": edit_date,
                                     "category": edit_category,
-                                    "title": edit_title.strip(),
+                                    "title": edit_title,
                                     "description": edit_description,
                                     "outcome": edit_outcome,
                                     "skills": edit_skills,
-                                    "hours": edit_hours if edit_hours > 0 else None,
+                                    "hours": (
+                                        edit_hours if edit_hours > 0 else None
+                                    ),
                                     "status": edit_status,
                                     "github_url": edit_github.strip(),
                                     "demo_url": edit_demo.strip(),
@@ -491,29 +598,44 @@ def display_entry(row, allow_edit=False):
                                     "linkedin_url": edit_linkedin.strip(),
                                     "next_step": edit_next_step,
                                 },
-                                entry_id=row["id"],
+                                entry_id=entry_id,
                             )
 
                             st.success("Entry updated successfully!")
                             st.rerun()
 
-                confirm_delete = st.checkbox(
-                    "I want to delete this entry",
-                    key=f"confirm_delete_{row['id']}",
-                )
+                        except Exception:
+                            st.error(
+                                "Could not update this entry. "
+                                "Check the Streamlit app logs."
+                            )
 
-                if st.button(
-                    "🗑️ Delete Entry",
-                    key=f"delete_{row['id']}",
-                    disabled=not confirm_delete,
-                ):
-                    delete_entry(row["id"])
+            st.divider()
+            st.warning("Deleting an entry cannot be undone.")
+
+            confirm_delete = st.checkbox(
+                "Confirm that I want to delete this entry",
+                key=f"confirm_delete_{entry_id}",
+            )
+
+            if st.button(
+                "🗑️ Delete Entry",
+                key=f"delete_entry_{entry_id}",
+                disabled=not confirm_delete,
+            ):
+                try:
+                    delete_entry(entry_id)
                     st.success("Entry deleted.")
                     st.rerun()
+                except Exception:
+                    st.error(
+                        "Could not delete the entry. "
+                        "Check the Streamlit app logs."
+                    )
 
 
 # =========================================================
-# OWNER LOGIN AND NAVIGATION
+# 10. OWNER LOGIN + SIDEBAR NAVIGATION
 # =========================================================
 
 if "user_role" not in st.session_state:
@@ -561,9 +683,10 @@ with st.sidebar:
                     "Owner password",
                     type="password",
                 )
-                owner_submit = st.form_submit_button("Log in")
 
-            if owner_submit:
+                login_clicked = st.form_submit_button("Log in")
+
+            if login_clicked:
                 if owner_password == APP_PASSWORD:
                     st.session_state.user_role = "owner"
                     st.session_state.logged_in = True
@@ -571,12 +694,12 @@ with st.sidebar:
                 else:
                     st.error("Incorrect owner password.")
 
-# Recalculate after the login section.
+# Recalculate after login handling.
 is_owner = st.session_state.get("user_role") == "owner"
 
 
 # =========================================================
-# GLOBAL HERO
+# 11. GLOBAL HERO
 # =========================================================
 
 st.markdown(f"""
@@ -597,7 +720,7 @@ st.markdown(f"""
 
 
 # =========================================================
-# HOME PAGE
+# 12. HOME
 # =========================================================
 
 if page == "Home":
@@ -609,11 +732,20 @@ if page == "Home":
     )
 
     df = get_data()
-
     total = len(df)
-    projects = int((df["category"] == "Project").sum()) if total else 0
-    ppts = int((df["category"] == "PPT").sum()) if total else 0
-    learning = int((df["category"] == "Learning").sum()) if total else 0
+
+    projects = (
+        int((df["category"] == "Project").sum())
+        if total else 0
+    )
+    ppts = (
+        int((df["category"] == "PPT").sum())
+        if total else 0
+    )
+    learning = (
+        int((df["category"] == "Learning").sum())
+        if total else 0
+    )
 
     a, b, c, d = st.columns(4)
     a.metric("Total Entries", total)
@@ -631,31 +763,29 @@ if page == "Home":
 
 
 # =========================================================
-# DASHBOARD + OWNER QUICK ADD FORM
+# 13. DASHBOARD + QUICK ADD
 # =========================================================
 
 elif page == "Dashboard":
     df = get_data()
 
-    today_count = (
-        len(df[df["work_date"].astype(str) == str(date.today())])
-        if not df.empty else 0
-    )
+    today_count = 0
+    month_count = 0
+    link_count = 0
 
-    month_count = (
-        len(
+    if not df.empty:
+        today_count = len(
+            df[df["work_date"].astype(str) == str(date.today())]
+        )
+
+        month_count = len(
             df[
                 df["work_date"].astype(str).str.startswith(
                     date.today().strftime("%Y-%m")
                 )
             ]
         )
-        if not df.empty else 0
-    )
 
-    link_count = 0
-
-    if not df.empty:
         for column in [
             "github_url",
             "demo_url",
@@ -664,7 +794,8 @@ elif page == "Dashboard":
         ]:
             link_count += int(
                 df[column].fillna("").astype(str)
-                .str.startswith(("https://", "http://")).sum()
+                .str.startswith(("https://", "http://"))
+                .sum()
             )
 
     a, b, c, d = st.columns(4)
@@ -673,14 +804,19 @@ elif page == "Dashboard":
     c.metric("This Month", month_count)
     d.metric("Links Saved", link_count)
 
-    # Only the owner can see and use this form.
     if is_owner:
         st.subheader("⚡ Quick Add")
-        st.caption("Add your work, achievements, and project links here.")
+        st.caption("Record your work and save your project links.")
 
-        with st.expander("➕ Add New Work / Project / Link", expanded=True):
+        with st.expander(
+            "➕ Add New Work / Project / Link",
+            expanded=True,
+        ):
             with st.form("add_work_form", clear_on_submit=True):
-                work_date = st.date_input("Date", value=date.today())
+                work_date = st.date_input(
+                    "Date",
+                    value=date.today(),
+                )
 
                 category = st.selectbox(
                     "Category",
@@ -708,6 +844,8 @@ elif page == "Dashboard":
                 demo_url = st.text_input("Live project URL")
                 ppt_url = st.text_input("PPT / document URL")
                 linkedin_url = st.text_input("LinkedIn post URL")
+
+                next_step = st.text_input("Tomorrow's priority")
 
                 submitted = st.form_submit_button(
                     "💾 Save Entry",
@@ -740,7 +878,7 @@ elif page == "Dashboard":
                             "Links must start with https:// or http://"
                         )
                     else:
-                        save_entry({
+                        entry_values = {
                             "work_date": work_date,
                             "category": category,
                             "title": title.strip(),
@@ -753,15 +891,25 @@ elif page == "Dashboard":
                             "demo_url": demo_url.strip(),
                             "ppt_url": ppt_url.strip(),
                             "linkedin_url": linkedin_url.strip(),
-                        })
+                            "next_step": next_step,
+                        }
 
-                        st.success("Entry saved successfully!")
-                        st.rerun()
+                        try:
+                            save_entry(entry_values)
+                            st.success("Entry saved successfully!")
+                            st.rerun()
+
+                        except Exception:
+                            st.error(
+                                "Unable to save this entry. "
+                                "Open Manage app → Logs to see the "
+                                "database error details."
+                            )
 
     else:
         st.info(
-            "Public dashboard: entries are viewable by everyone. "
-            "Owner login is required to add or edit records."
+            "You are viewing the public dashboard. "
+            "Log in as owner to add, edit, or delete entries."
         )
 
     st.subheader("🕒 Recent Activity")
@@ -774,7 +922,7 @@ elif page == "Dashboard":
 
 
 # =========================================================
-# ABOUT PAGE
+# 14. ABOUT
 # =========================================================
 
 elif page == "About":
@@ -792,7 +940,7 @@ elif page == "About":
 
 
 # =========================================================
-# MY WORK PAGE
+# 15. MY WORK
 # =========================================================
 
 elif page == "My Work":
@@ -811,7 +959,7 @@ elif page == "My Work":
 
 
 # =========================================================
-# CATEGORY PAGES
+# 16. CATEGORY PAGES
 # =========================================================
 
 elif page in [
@@ -831,12 +979,15 @@ elif page in [
         "Learning": "Learning",
     }
 
-    category = category_map[page]
+    selected_category = category_map[page]
 
     st.subheader(f"📂 {page}")
 
     search = st.text_input("🔎 Search entries")
-    df = get_data(category=category, search=search)
+    df = get_data(
+        category=selected_category,
+        search=search,
+    )
 
     if df.empty:
         st.info("No entries found in this category.")
@@ -848,14 +999,14 @@ elif page in [
 
 
 # =========================================================
-# BACKUP PAGE
+# 17. BACKUP
 # =========================================================
 
 elif page == "Backup":
     st.subheader("💾 Export Your Records")
 
     if not is_owner:
-        st.info("Please log in as the owner to download database backups.")
+        st.info("Log in as owner to download your backups.")
     else:
         df = get_data()
 
@@ -895,7 +1046,7 @@ elif page == "Backup":
 
 
 # =========================================================
-# FOOTER
+# 18. FOOTER
 # =========================================================
 
 st.divider()
