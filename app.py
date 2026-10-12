@@ -230,158 +230,86 @@ with st.sidebar:
 # ---------- PUBLIC PAGES ----------
 
 if page == "Home":
-    st.markdown("""
-    <div class="hero">
-      <div class="welcome">🌅 Your personal progress portfolio</div>
-      <span class="hero-kicker">Projects • PPTs • LinkedIn • GitHub • Learning</span>
-      <h1>Daily Work &amp; Achievement Tracker</h1>
-      <div class="subtitle">Track your work. Celebrate your progress. Build your future.</div>
-      <div class="quote">“A better version of myself, every day.”</div>
-    </div>
-    """, unsafe_allow_html=True)
+    # The global Scenic Hero banner is already displayed above.
     st.subheader("Welcome to my work portfolio")
-    st.write("Explore daily activities, projects, presentations, learning, GitHub updates, and achievements.")
-    all_entries = get_data()
-    a, b, c = st.columns(3)
-    a.metric("Total entries", len(all_entries))
-    b.metric("Projects", int((all_entries["category"] == "Project").sum()) if not all_entries.empty else 0)
-    c.metric("Learning entries", int((all_entries["category"] == "Learning").sum()) if not all_entries.empty else 0)
-
-elif page == "About":
-    st.markdown("""
-    <div class="hero">
-      <span class="hero-kicker">ABOUT THIS PORTFOLIO</span>
-      <h1>Consistency today, success tomorrow.</h1>
-      <div class="subtitle">A public view of daily work, learning, and achievements.</div>
-    </div>
-    """, unsafe_allow_html=True)
-    st.subheader("About the tracker")
-    st.write("This portfolio records daily work, projects, presentations, LinkedIn posts, GitHub updates, and learning progress. Visitors can browse without logging in. Only the owner can add, edit, or delete records.")
-
-elif page == "My Work" and not is_owner:
-    st.subheader("🔐 Owner access required")
-    st.write("Visitors can explore the public portfolio. Log in as owner to manage daily work.")
-    st.info("Open Owner login in the sidebar to continue.")
-
-elif page == "My Work" and is_owner:
-    st.subheader("📝 Manage My Work")
-    st.write("Use Dashboard → Quick Add to record a new entry, or choose a category from the navigation.")
-
-
-elif page == "Dashboard":
-    df = get_data()
-
-    today_count = (
-        len(df[df["work_date"].astype(str) == str(date.today())])
-        if not df.empty else 0
+    st.write(
+        "Explore my daily activities, projects, presentations, "
+        "learning, GitHub updates, and achievements."
     )
 
-    month_count = (
-        len(df[df["work_date"].astype(str).str.startswith(
-            date.today().strftime("%Y-%m")
-        )])
-        if not df.empty else 0
+    all_entries = get_data()
+
+    total = len(all_entries)
+    projects = (
+        int((all_entries["category"] == "Project").sum())
+        if not all_entries.empty else 0
+    )
+    learning = (
+        int((all_entries["category"] == "Learning").sum())
+        if not all_entries.empty else 0
+    )
+    ppts = (
+        int((all_entries["category"] == "PPT").sum())
+        if not all_entries.empty else 0
     )
 
     a, b, c, d = st.columns(4)
-
-    a.metric("Total Entries", len(df))
-    b.metric("Today's Entries", today_count)
-    c.metric("This Month", month_count)
-
-    link_count = 0
-    if not df.empty:
-        for col in [
-            "github_url", "demo_url",
-            "ppt_url", "linkedin_url"
-        ]:
-            link_count += df[col].fillna("").astype(str).str.startswith(
-                ("https://", "http://")
-            ).sum()
-
-    d.metric("Links Saved", int(link_count))
-
-    if is_owner:
-        st.subheader("⚡ Quick Add")
-
-        with st.expander("➕ Record Today's Work", expanded=True):
-            with st.form("quick_add"):
-                work_date = st.date_input("Date", date.today())
-                category = st.selectbox("Category", CATEGORIES)
-                title = st.text_input("Work title *")
-                description = st.text_area("Tasks / notes")
-                outcome = st.text_area("Achievement / result")
-                skills = st.text_input("Tools / skills")
-                hours = st.number_input(
-                    "Hours spent", min_value=0.0, max_value=24.0, step=0.5
-                )
-                status = st.selectbox("Status", STATUSES)
-
-                github_url = st.text_input("GitHub URL")
-                demo_url = st.text_input("Live project URL")
-                ppt_url = st.text_input("PPT / document URL")
-                linkedin_url = st.text_input("LinkedIn post URL")
-                next_step = st.text_input("Tomorrow's priority")
-
-                submitted = st.form_submit_button(
-                    "💾 Save Entry",
-                    type="primary"
-                )
-
-            if submitted:
-                if not title.strip():
-                    st.error("Enter a title.")
-                else:
-                    links = [
-                        github_url, demo_url, ppt_url, linkedin_url
-                    ]
-
-                    if any(
-                        u.strip() and not u.strip().startswith(
-                            ("https://", "http://")
-                        )
-                        for u in links
-                    ):
-                        st.error("Links must start with https:// or http://")
-                    else:
-                        save_entry({
-                            "work_date": work_date,
-                            "category": category,
-                            "title": title.strip(),
-                            "description": description,
-                            "outcome": outcome,
-                            "skills": skills,
-                            "hours": hours if hours > 0 else None,
-                            "status": status,
-                            "github_url": github_url.strip(),
-                            "demo_url": demo_url.strip(),
-                            "ppt_url": ppt_url.strip(),
-                            "linkedin_url": linkedin_url.strip(),
-                            "next_step": next_step
-                        })
-
-                        st.success("Entry saved!")
-                        st.rerun()
+    a.metric("Total Entries", total)
+    b.metric("Projects", projects)
+    c.metric("PPTs", ppts)
+    d.metric("Learning Entries", learning)
 
     st.subheader("🕒 Recent Activity")
 
-    if df.empty:
-        st.info("Your tracker is empty. Add your first entry above.")
+    if all_entries.empty:
+        st.info("No work entries yet.")
     else:
-        for _, row in df.head(5).iterrows():
+        for _, row in all_entries.head(5).iterrows():
             with st.container(border=True):
                 st.markdown(f"### {row['title']}")
                 st.caption(
                     f"{row['work_date']} • "
                     f"{row['category']} • {row['status']}"
                 )
-                st.write(row["description"] or "")
-                st.write(row["outcome"] or "")
 
-                show_link("GitHub", row["github_url"])
-                show_link("Live Project", row["demo_url"])
-                show_link("PPT", row["ppt_url"])
-                show_link("LinkedIn Post", row["linkedin_url"])
+                if row.get("description"):
+                    st.write(row["description"])
+
+                if row.get("outcome"):
+                    st.write(row["outcome"])
+
+                show_link("GitHub", row.get("github_url"))
+                show_link("Live Project", row.get("demo_url"))
+                show_link("PPT", row.get("ppt_url"))
+                show_link("LinkedIn Post", row.get("linkedin_url"))
+
+
+elif page == "About":
+    st.subheader("About this portfolio")
+    st.write(
+        "This tracker records daily work, projects, presentations, "
+        "LinkedIn posts, GitHub updates, learning, and achievements."
+    )
+    st.write(
+        "Visitors can browse the public portfolio without logging in. "
+        "Only the owner can add, edit, or delete records."
+    )
+
+
+elif page == "My Work" and not is_owner:
+    st.subheader("🔐 Owner access required")
+    st.write(
+        "Visitors can explore the public portfolio. "
+        "Log in as owner to manage your daily work."
+    )
+
+
+elif page == "My Work" and is_owner:
+    st.subheader("📝 Manage My Work")
+    st.write(
+        "Open Dashboard to add entries, or choose a category "
+        "from the navigation to review your work."
+    )
 
 
 # ---------- CATEGORY PAGES ----------
