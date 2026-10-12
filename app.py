@@ -296,21 +296,37 @@ elif page == "About":
     )
 
 
-elif page == "My Work" and not is_owner:
-    st.subheader("🔐 Owner access required")
-    st.write(
-        "Visitors can explore the public portfolio. "
-        "Log in as owner to manage your daily work."
-    )
+elif page == "My Work":
+    st.subheader("📝 My Work & Achievements")
 
+    df = get_data()
 
-elif page == "My Work" and is_owner:
-    st.subheader("📝 Manage My Work")
-    st.write(
-        "Open Dashboard to add entries, or choose a category "
-        "from the navigation to review your work."
-    )
+    if df.empty:
+        st.info("No work entries available yet.")
+    else:
+        st.caption(f"Total records: {len(df)}")
 
+        for _, row in df.iterrows():
+            with st.container(border=True):
+                st.markdown(f"### {row['title']}")
+                st.caption(
+                    f"{row['work_date']} • "
+                    f"{row['category']} • {row['status']}"
+                )
+
+                if row.get("description"):
+                    st.write(row["description"])
+
+                if row.get("outcome"):
+                    st.write(f"**Achievement:** {row['outcome']}")
+
+                if row.get("skills"):
+                    st.write(f"**Skills:** {row['skills']}")
+
+                show_link("GitHub", row.get("github_url"))
+                show_link("Live Project", row.get("demo_url"))
+                show_link("PPT", row.get("ppt_url"))
+                show_link("LinkedIn", row.get("linkedin_url"))
 
 # ---------- CATEGORY PAGES ----------
 
