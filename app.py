@@ -561,4 +561,345 @@ with st.sidebar:
                     "Owner password",
                     type="password",
                 )
-                owner
+                owner_submit = st.form_submit_button("Log in")
+
+            if owner_submit:
+                if owner_password == APP_PASSWORD:
+                    st.session_state.user_role = "owner"
+                    st.session_state.logged_in = True
+                    st.rerun()
+                else:
+                    st.error("Incorrect owner password.")
+
+# Recalculate after the login section.
+is_owner = st.session_state.get("user_role") == "owner"
+
+
+# =========================================================
+# GLOBAL HERO
+# =========================================================
+
+st.markdown(f"""
+<div class="hero">
+    <div class="welcome">
+        🌅 Personal portfolio · {date.today().strftime("%A, %d %b %Y")}
+    </div>
+    <span class="hero-kicker">
+        Projects&nbsp; • &nbsp;PPTs&nbsp; • &nbsp;LinkedIn&nbsp; • &nbsp;GitHub&nbsp; • &nbsp;Learning
+    </span>
+    <h1>Daily Work &amp; Achievement Tracker</h1>
+    <div class="subtitle">
+        Track your work. Celebrate your progress. Build your future.
+    </div>
+    <div class="quote">“A better version of myself, every day.”</div>
+</div>
+""", unsafe_allow_html=True)
+
+
+# =========================================================
+# HOME PAGE
+# =========================================================
+
+if page == "Home":
+    st.subheader("Welcome to my work portfolio")
+
+    st.write(
+        "Explore daily activities, projects, presentations, learning, "
+        "GitHub updates, and achievements."
+    )
+
+    df = get_data()
+
+    total = len(df)
+    projects = int((df["category"] == "Project").sum()) if total else 0
+    ppts = int((df["category"] == "PPT").sum()) if total else 0
+    learning = int((df["category"] == "Learning").sum()) if total else 0
+
+    a, b, c, d = st.columns(4)
+    a.metric("Total Entries", total)
+    b.metric("Projects", projects)
+    c.metric("PPTs", ppts)
+    d.metric("Learning Entries", learning)
+
+    st.subheader("🕒 Recent Activity")
+
+    if df.empty:
+        st.info("No work entries yet.")
+    else:
+        for _, row in df.head(5).iterrows():
+            display_entry(row)
+
+
+# =========================================================
+# DASHBOARD + OWNER QUICK ADD FORM
+# =========================================================
+
+elif page == "Dashboard":
+    df = get_data()
+
+    today_count = (
+        len(df[df["work_date"].astype(str) == str(date.today())])
+        if not df.empty else 0
+    )
+
+    month_count = (
+        len(
+            df[
+                df["work_date"].astype(str).str.startswith(
+                    date.today().strftime("%Y-%m")
+                )
+            ]
+        )
+        if not df.empty else 0
+    )
+
+    link_count = 0
+
+    if not df.empty:
+        for column in [
+            "github_url",
+            "demo_url",
+            "ppt_url",
+            "linkedin_url",
+        ]:
+            link_count += int(
+                df[column].fillna("").astype(str)
+                .str.startswith(("https://", "http://")).sum()
+            )
+
+    a, b, c, d = st.columns(4)
+    a.metric("Total Entries", len(df))
+    b.metric("Today's Entries", today_count)
+    c.metric("This Month", month_count)
+    d.metric("Links Saved", link_count)
+
+    # Only the owner can see and use this form.
+    if is_owner:
+        st.subheader("⚡ Quick Add")
+        st.caption("Add your work, achievements, and project links here.")
+
+        with st.expander("➕ Add New Work / Project / Link", expanded=True):
+            with st.form("add_work_form", clear_on_submit=True):
+                work_date = st.date_input("Date", value=date.today())
+
+                category = st.selectbox(
+                    "Category",
+                    CATEGORIES,
+                )
+
+                title = st.text_input("Work title *")
+                description = st.text_area("Tasks / notes")
+                outcome = st.text_area("Achievement / result")
+                skills = st.text_input("Tools / skills")
+
+                hours = st.number_input(
+                    "Hours spent",
+                    min_value=0.0,
+                    max_value=24.0,
+                    value=0.0,
+                    step=0.5,
+                )
+
+                status = st.selectbox("Status", STATUSES)
+
+                st.markdown("#### 🔗 Project and Social Links")
+
+                github_url = st.text_input("GitHub repository URL")
+                demo_url = st.text_input("Live project URL")
+                ppt_url = st.text_input("PPT / document URL")
+                linkedin_url = st.text_input("LinkedIn post URL")
+
+                next_step = st.text_input("Tomorrow's priority")
+
+                submitted = st.form_submit_button(
+                    "💾 Save Entry",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+            if submitted:
+                if not title.strip():
+                    st.error("Please enter a work title.")
+                else:
+                    links = [
+                        github_url,
+                        demo_url,
+                        ppt_url,
+                        linkedin_url,
+                    ]
+
+                    invalid_links = [
+                        link.strip()
+                        for link in links
+                        if link.strip()
+                        and not link.strip().startswith(
+                            ("https://", "http://")
+                        )
+                    ]
+
+                    if invalid_links:
+                        st.error(
+                            "Links must start with https:// or http://"
+                        )
+                    else:
+                        save_entry({
+                            "work_date": work_date,
+                            "category": category,
+                            "title": title.strip(),
+                            "description": description,
+                            "outcome": outcome,
+                            "skills": skills,
+                            "hours": hours if hours > 0 else None,
+                            "status": status,
+                            "github_url": github_url.strip(),
+                            "demo_url": demo_url.strip(),
+                            "ppt_url": ppt_url.strip(),
+                            "linkedin_url": linkedin_url.strip(),
+                            "next_step": next_step,
+                        })
+
+                        st.success("Entry saved successfully!")
+                        st.rerun()
+
+    else:
+        st.info(
+            "Public dashboard: entries are viewable by everyone. "
+            "Owner login is required to add or edit records."
+        )
+
+    st.subheader("🕒 Recent Activity")
+
+    if df.empty:
+        st.info("No entries available yet.")
+    else:
+        for _, row in df.head(10).iterrows():
+            display_entry(row, allow_edit=is_owner)
+
+
+# =========================================================
+# ABOUT PAGE
+# =========================================================
+
+elif page == "About":
+    st.subheader("About this portfolio")
+
+    st.write(
+        "This tracker records daily work, projects, presentations, "
+        "LinkedIn posts, GitHub updates, learning, and achievements."
+    )
+
+    st.write(
+        "Visitors can browse the portfolio without logging in. "
+        "Only the owner can add, edit, or delete records."
+    )
+
+
+# =========================================================
+# MY WORK PAGE
+# =========================================================
+
+elif page == "My Work":
+    st.subheader("📝 My Work & Achievements")
+
+    search = st.text_input("🔎 Search all work")
+    df = get_data(search=search)
+
+    if df.empty:
+        st.info("No work entries found.")
+    else:
+        st.caption(f"Total records: {len(df)}")
+
+        for _, row in df.iterrows():
+            display_entry(row, allow_edit=is_owner)
+
+
+# =========================================================
+# CATEGORY PAGES
+# =========================================================
+
+elif page in [
+    "Daily Work",
+    "Projects",
+    "PPT Tracker",
+    "LinkedIn Posts",
+    "GitHub Updates",
+    "Learning",
+]:
+    category_map = {
+        "Daily Work": "Daily Work",
+        "Projects": "Project",
+        "PPT Tracker": "PPT",
+        "LinkedIn Posts": "LinkedIn Post",
+        "GitHub Updates": "GitHub Update",
+        "Learning": "Learning",
+    }
+
+    category = category_map[page]
+
+    st.subheader(f"📂 {page}")
+
+    search = st.text_input("🔎 Search entries")
+    df = get_data(category=category, search=search)
+
+    if df.empty:
+        st.info("No entries found in this category.")
+    else:
+        st.caption(f"Found {len(df)} entries")
+
+        for _, row in df.iterrows():
+            display_entry(row, allow_edit=is_owner)
+
+
+# =========================================================
+# BACKUP PAGE
+# =========================================================
+
+elif page == "Backup":
+    st.subheader("💾 Export Your Records")
+
+    if not is_owner:
+        st.info("Please log in as the owner to download database backups.")
+    else:
+        df = get_data()
+
+        if df.empty:
+            st.info("No entries to export yet.")
+        else:
+            st.download_button(
+                "⬇️ Download CSV Backup",
+                data=df.to_csv(index=False).encode("utf-8-sig"),
+                file_name="daily_work_tracker.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+
+            st.download_button(
+                "⬇️ Download JSON Backup",
+                data=df.to_json(
+                    orient="records",
+                    indent=2,
+                    date_format="iso",
+                ).encode("utf-8"),
+                file_name="daily_work_tracker.json",
+                mime="application/json",
+                use_container_width=True,
+            )
+
+            st.dataframe(
+                df,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        st.warning(
+            "Keep your database URL and owner password private. "
+            "Export backups regularly."
+        )
+
+
+# =========================================================
+# FOOTER
+# =========================================================
+
+st.divider()
+st.caption("Your work. Your progress. One place.")
