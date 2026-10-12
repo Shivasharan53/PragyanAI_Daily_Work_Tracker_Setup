@@ -59,6 +59,12 @@ def setting(key):
 APP_PASSWORD = setting("APP_PASSWORD")
 DATABASE_URL = setting("DATABASE_URL")
 
+if "user_role" not in st.session_state:
+    st.session_state.user_role = "public"
+
+is_owner = st.session_state.get("user_role") == "owner"
+
+
 if not APP_PASSWORD or not DATABASE_URL:
     st.error("Configure APP_PASSWORD and DATABASE_URL in Streamlit Secrets.")
     st.stop()
@@ -494,6 +500,5 @@ elif page == "Backup":
         "Keep your database URL and app password private. "
         "Export backups regularly."
     )
-
 st.divider()
 st.caption("Your work. Your progress. One place.")
