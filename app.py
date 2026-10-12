@@ -1,364 +1,3 @@
-import os
-from datetime import date
-
-import pandas as pd
-import streamlit as st
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import make_url
-from sqlalchemy.exc import SQLAlchemyError
-
-st.set_page_config(
-    page_title="Daily Work Tracker",
-    page_icon="📘",
-    layout="wide"
-)
-
-st.title("📘 Daily Work & Achievement Tracker")
-st.caption("Projects • PPTs • LinkedIn • GitHub • Learning")
-
-# ---------- CONFIGURATION ----------
-
-def setting(key):
-    try:
-        return st.secrets.get(key, os.getenv(key, ""))
-    except Exception:
-        return os.getenv(key, "")
-
-APP_PASSWORD = setting("APP_PASSWORD")
-DATABASE_URL = setting("DATABASE_URL")
-
-if not APP_PASSWORD or not DATABASE_URL:
-    st.error("Configure APP_PASSWORD and DATABASE_URL in Streamlit Secrets.")
-    st.stop()
-
-if not st.session_state.get("logged_in"):
-    st.subheader("🔐 Personal Login")
-
-    with st.form("login"):
-        password = st.text_input("Enter app password", type="password")
-        submit = st.form_submit_button("Login")
-
-    if submit:
-        if password == APP_PASSWORD:
-            st.session_state.logged_in = True
-            st.rerun()
-        else:
-            st.error("Incorrect password.")
-
-    st.stop()
-
-# Normalize common PostgreSQL URL schemes for the psycopg driver.
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL[len("postgres://"):]
-elif DATABASE_URL.startswith("postgresql://"):
-    DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL[len("postgresql://"):]
-
-# Parse the URL without ever displaying its password.
-try:
-    db_config = make_url(DATABASE_URL)
-except Exception:
-    st.error(
-        "DATABASE_URL could not be parsed. In Streamlit Secrets, paste the "
-        "complete Supabase Session Pooler connection string and replace only "
-        "the password placeholder. Do not share the password."
-    )
-    st.stop()
-
-with st.expander("🔎 Database connection diagnostics (password hidden)", expanded=True):
-    st.write("Host:", db_config.host or "Not detected")
-    st.write("Port:", db_config.port or "Default")
-    st.write("Username:", db_config.username or "Not detected")
-    st.write("Database:", db_config.database or "Not detected")
-    if db_config.host and "pooler.supabase.com" in db_config.host:
-        if db_config.port != 5432:
-            st.warning("For Session Pooler, the port should be 5432.")
-        if db_config.username and "." not in db_config.username:
-            st.warning(
-                "Shared Supabase Session Pooler usernames normally look like "
-                "postgres.PROJECT_REF, not just postgres."
-            )
-    elif db_config.host and db_config.host.startswith("db.") and db_config.host.endswith(".supabase.co"):
-        st.warning(
-            "This looks like a direct Supabase connection. On IPv4-only hosting, "
-            "use the Session Pooler connection string copied from Supabase Connect."
-        )
-
-@st.cache_resource
-def get_engine(url):
-    return create_engine(
-        url,
-        pool_pre_ping=True,
-        connect_args={"connect_timeout": 10},
-    )
-
-engine = get_engine(DATABASE_URL)
-
-try:
-    with engine.begin() as conn:
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS work_entries (
-                id BIGSERIAL PRIMARY KEY,
-                work_date DATE NOT NULL,
-                category TEXT NOT NULL,
-                title TEXT NOT NULL,
-                description TEXT DEFAULT '',
-                outcome TEXT DEFAULT '',
-                skills TEXT DEFAULT '',
-                hours NUMERIC(6,2),
-                status TEXT DEFAULT 'Completed',
-                github_url TEXT DEFAULT '',
-                demo_url TEXT DEFAULT '',
-                ppt_url TEXT DEFAULT '',
-                linkedin_url TEXT DEFAULT '',
-                next_step TEXT DEFAULT '',
-                created_at TIMESTAMPTZ DEFAULT NOW()
-            )
-        """))
-except SQLAlchemyError as exc:
-    st.error("Could not connect to the database or initialize its table.")
-    st.write("Check the host, port, and username shown above.")
-    st.code(str(getattr(exc, "orig", exc)))
-    st.info(
-        "For Supabase Session Pooler, copy the exact connection string from "
-        "Supabase → Connect → Session pooler. Use port 5432 and a username "
-        "that includes the project reference. Replace only [YOUR-PASSWORD], "
-        "and URL-encode reserved password characters such as @, #, ?, or &."
-    )
-    st.stop()
-
-CATEGORIES = [
-    "Daily Work", "Project", "PPT",
-    "LinkedIn Post", "GitHub Update",
-    "Learning", "Job Search", "Other"
-]
-
-STATUSES = [
-    "Completed", "In Progress", "Draft",
-    "Published", "Blocked", "To Do"
-]
-
-
-def get_data(category=None, search=""):
-    # Build filters only when the user has selected/entered one.
-    # Avoids PostgreSQL's ambiguous-type error for a NULL category parameter.
-    conditions = []
-    params = {}
-
-    if category is not None:
-        conditions.append("category = :category")
-        params["category"] = category
-
-    search_term = search.lower().strip()
-    if search_term:
-        conditions.append("""
-            LOWER(title || ' ' || COALESCE(description, '')
-                || ' ' || COALESCE(skills, '')) LIKE :pattern
-        """)
-        params["pattern"] = f"%{search_term}%"
-
-    sql = "SELECT * FROM work_entries"
-    if conditions:
-        sql += " WHERE " + " AND ".join(conditions)
-    sql += " ORDER BY work_date DESC, id DESC"
-
-    with engine.connect() as conn:
-        result = conn.execute(text(sql), params)
-        return pd.DataFrame(result.mappings().all())
-
-
-def save_entry(values, entry_id=None):
-    if entry_id is None:
-        sql = """
-            INSERT INTO work_entries (
-                work_date, category, title, description,
-                outcome, skills, hours, status,
-                github_url, demo_url, ppt_url,
-                linkedin_url, next_step
-            )
-            VALUES (
-                :work_date, :category, :title, :description,
-                :outcome, :skills, :hours, :status,
-                :github_url, :demo_url, :ppt_url,
-                :linkedin_url, :next_step
-            )
-        """
-    else:
-        sql = """
-            UPDATE work_entries SET
-                work_date=:work_date,
-                category=:category,
-                title=:title,
-                description=:description,
-                outcome=:outcome,
-                skills=:skills,
-                hours=:hours,
-                status=:status,
-                github_url=:github_url,
-                demo_url=:demo_url,
-                ppt_url=:ppt_url,
-                linkedin_url=:linkedin_url,
-                next_step=:next_step
-            WHERE id=:id
-        """
-        values["id"] = int(entry_id)
-
-    with engine.begin() as conn:
-        conn.execute(text(sql), values)
-
-
-def delete_entry(entry_id):
-    with engine.begin() as conn:
-        conn.execute(
-            text("DELETE FROM work_entries WHERE id=:id"),
-            {"id": int(entry_id)}
-        )
-
-
-def show_link(label, url):
-    if url and url.startswith(("https://", "http://")):
-        st.markdown(f"[{label} ↗]({url})")
-
-
-# ---------- SIDEBAR ----------
-
-with st.sidebar:
-    st.header("📘 My Tracker")
-
-    page = st.radio("Navigation", [
-        "Dashboard",
-        "Daily Work",
-        "Projects",
-        "PPT Tracker",
-        "LinkedIn Posts",
-        "GitHub Updates",
-        "Learning",
-        "Backup"
-    ])
-
-    if st.button("🔒 Logout"):
-        st.session_state.logged_in = False
-        st.rerun()
-
-
-# ---------- DASHBOARD ----------
-
-if page == "Dashboard":
-    df = get_data()
-
-    today_count = (
-        len(df[df["work_date"].astype(str) == str(date.today())])
-        if not df.empty else 0
-    )
-
-    month_count = (
-        len(df[df["work_date"].astype(str).str.startswith(
-            date.today().strftime("%Y-%m")
-        )])
-        if not df.empty else 0
-    )
-
-    a, b, c, d = st.columns(4)
-
-    a.metric("Total Entries", len(df))
-    b.metric("Today's Entries", today_count)
-    c.metric("This Month", month_count)
-
-    link_count = 0
-    if not df.empty:
-        for col in [
-            "github_url", "demo_url",
-            "ppt_url", "linkedin_url"
-        ]:
-            link_count += df[col].fillna("").astype(str).str.startswith(
-                ("https://", "http://")
-            ).sum()
-
-    d.metric("Links Saved", int(link_count))
-
-    st.subheader("⚡ Quick Add")
-
-    with st.expander("➕ Record Today's Work", expanded=True):
-        with st.form("quick_add"):
-            work_date = st.date_input("Date", date.today())
-            category = st.selectbox("Category", CATEGORIES)
-            title = st.text_input("Work title *")
-            description = st.text_area("Tasks / notes")
-            outcome = st.text_area("Achievement / result")
-            skills = st.text_input("Tools / skills")
-            hours = st.number_input(
-                "Hours spent", min_value=0.0, max_value=24.0, step=0.5
-            )
-            status = st.selectbox("Status", STATUSES)
-
-            github_url = st.text_input("GitHub URL")
-            demo_url = st.text_input("Live project URL")
-            ppt_url = st.text_input("PPT / document URL")
-            linkedin_url = st.text_input("LinkedIn post URL")
-            next_step = st.text_input("Tomorrow's priority")
-
-            submitted = st.form_submit_button(
-                "💾 Save Entry",
-                type="primary"
-            )
-
-        if submitted:
-            if not title.strip():
-                st.error("Enter a title.")
-            else:
-                links = [
-                    github_url, demo_url, ppt_url, linkedin_url
-                ]
-
-                if any(
-                    u.strip() and not u.strip().startswith(
-                        ("https://", "http://")
-                    )
-                    for u in links
-                ):
-                    st.error("Links must start with https:// or http://")
-                else:
-                    save_entry({
-                        "work_date": work_date,
-                        "category": category,
-                        "title": title.strip(),
-                        "description": description,
-                        "outcome": outcome,
-                        "skills": skills,
-                        "hours": hours if hours > 0 else None,
-                        "status": status,
-                        "github_url": github_url.strip(),
-                        "demo_url": demo_url.strip(),
-                        "ppt_url": ppt_url.strip(),
-                        "linkedin_url": linkedin_url.strip(),
-                        "next_step": next_step
-                    })
-
-                    st.success("Entry saved!")
-                    st.rerun()
-
-    st.subheader("🕒 Recent Activity")
-
-    if df.empty:
-        st.info("Your tracker is empty. Add your first entry above.")
-    else:
-        for _, row in df.head(5).iterrows():
-            with st.container(border=True):
-                st.markdown(f"### {row['title']}")
-                st.caption(
-                    f"{row['work_date']} • "
-                    f"{row['category']} • {row['status']}"
-                )
-                st.write(row["description"] or "")
-                st.write(row["outcome"] or "")
-
-                show_link("GitHub", row["github_url"])
-                show_link("Live Project", row["demo_url"])
-                show_link("PPT", row["ppt_url"])
-                show_link("LinkedIn Post", row["linkedin_url"])
-
-
-# ---------- CATEGORY PAGES ----------
-
 elif page in [
     "Daily Work", "Projects", "PPT Tracker",
     "LinkedIn Posts", "GitHub Updates", "Learning"
@@ -397,68 +36,69 @@ elif page in [
                 show_link("PPT", row["ppt_url"])
                 show_link("LinkedIn", row["linkedin_url"])
 
-                with st.expander("✏️ Edit or delete"):
-                    with st.form(f"edit_{row['id']}"):
-                        title = st.text_input(
-                            "Title", value=row["title"]
-                        )
-                        description = st.text_area(
-                            "Notes", value=row["description"] or ""
-                        )
-                        outcome = st.text_area(
-                            "Achievement", value=row["outcome"] or ""
-                        )
-                        skills = st.text_input(
-                            "Skills", value=row["skills"] or ""
-                        )
-                        status = st.selectbox(
-                            "Status", STATUSES,
-                            index=(
-                                STATUSES.index(row["status"])
-                                if row["status"] in STATUSES else 0
+                if is_owner:
+                    with st.expander("✏️ Edit or delete"):
+                        with st.form(f"edit_{row['id']}"):
+                            title = st.text_input(
+                                "Title", value=row["title"]
                             )
-                        )
-                        next_step = st.text_input(
-                            "Next step", value=row["next_step"] or ""
-                        )
+                            description = st.text_area(
+                                "Notes", value=row["description"] or ""
+                            )
+                            outcome = st.text_area(
+                                "Achievement", value=row["outcome"] or ""
+                            )
+                            skills = st.text_input(
+                                "Skills", value=row["skills"] or ""
+                            )
+                            status = st.selectbox(
+                                "Status", STATUSES,
+                                index=(
+                                    STATUSES.index(row["status"])
+                                    if row["status"] in STATUSES else 0
+                                )
+                            )
+                            next_step = st.text_input(
+                                "Next step", value=row["next_step"] or ""
+                            )
 
-                        update = st.form_submit_button("Save Changes")
+                            update = st.form_submit_button("Save Changes")
 
-                    if update:
-                        with engine.begin() as conn:
-                            conn.execute(text("""
-                                UPDATE work_entries SET
-                                title=:title,
-                                description=:description,
-                                outcome=:outcome,
-                                skills=:skills,
-                                status=:status,
-                                next_step=:next_step
-                                WHERE id=:id
-                            """), {
-                                "id": int(row["id"]),
-                                "title": title,
-                                "description": description,
-                                "outcome": outcome,
-                                "skills": skills,
-                                "status": status,
-                                "next_step": next_step
-                            })
+                        if update:
+                            with engine.begin() as conn:
+                                conn.execute(text("""
+                                    UPDATE work_entries SET
+                                    title=:title,
+                                    description=:description,
+                                    outcome=:outcome,
+                                    skills=:skills,
+                                    status=:status,
+                                    next_step=:next_step
+                                    WHERE id=:id
+                                """), {
+                                    "id": int(row["id"]),
+                                    "title": title,
+                                    "description": description,
+                                    "outcome": outcome,
+                                    "skills": skills,
+                                    "status": status,
+                                    "next_step": next_step
+                                })
 
-                        st.success("Updated!")
-                        st.rerun()
+                            st.success("Updated!")
+                            st.rerun()
 
-                    if st.button(
-                        "🗑️ Delete Entry",
-                        key=f"delete_{row['id']}"
-                    ):
-                        delete_entry(row["id"])
-                        st.rerun()
+                        if st.button(
+                            "🗑️ Delete Entry",
+                            key=f"delete_{row['id']}"
+                        ):
+                            delete_entry(row["id"])
+                            st.rerun()
 
 
 # ---------- BACKUP ----------
 
-elif page == "Backup":
+elif page == "Backup" and is_owner:
     st.subheader("💾 Export Your Records")
 
     df = get_data()
@@ -486,6 +126,3 @@ elif page == "Backup":
         "Keep your database URL and app password private. "
         "Export backups regularly."
     )
-
-st.divider()
-st.caption("Your work. Your progress. One place.")
