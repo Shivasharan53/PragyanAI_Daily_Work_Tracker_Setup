@@ -709,10 +709,9 @@ elif page == "Dashboard":
                 ppt_url = st.text_input("PPT / document URL")
                 linkedin_url = st.text_input("LinkedIn post URL")
 
-                next_step = st.text_input("Tomorrow's priority")
-
                 submitted = st.form_submit_button(
                     "💾 Save Entry",
+                    "Delete Entry",
                     type="primary",
                     use_container_width=True,
                 )
