@@ -711,7 +711,6 @@ elif page == "Dashboard":
 
                 submitted = st.form_submit_button(
                     "💾 Save Entry",
-                    "Delete Entry",
                     type="primary",
                     use_container_width=True,
                 )
@@ -754,7 +753,6 @@ elif page == "Dashboard":
                             "demo_url": demo_url.strip(),
                             "ppt_url": ppt_url.strip(),
                             "linkedin_url": linkedin_url.strip(),
-                            "next_step": next_step,
                         })
 
                         st.success("Entry saved successfully!")
