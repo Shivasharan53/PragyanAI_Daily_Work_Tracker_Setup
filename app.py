@@ -213,8 +213,15 @@ def show_link(label, url):
 
 with st.sidebar:
     st.markdown("### 🟪 Daily Work Tracker")
-    st.caption("Consistency today, success tomorrow.")
-    st.header("📘 My Tracker")
+    st.caption("A better version of myself, every day.")
+
+    page = st.radio(
+        "Navigation",
+        ["Home", "Dashboard", "About", "My Work", "Daily Work", "Projects", "PPT Tracker", "LinkedIn Posts", "GitHub Updates", "Learning"],
+        label_visibility="collapsed",
+    )
+
+    st.divider()
     if is_owner:
         st.success("Owner mode · Full access")
         if st.button("🔒 Log out"):
@@ -222,8 +229,8 @@ with st.sidebar:
             st.session_state.pop("user_role", None)
             st.rerun()
     else:
-        st.info("🌐 Public View · Read-only")
-        with st.expander("Owner login"):
+        st.caption("Public view · Read-only")
+        with st.expander("🔐 Owner login"):
             with st.form("owner_login"):
                 owner_password = st.text_input("Owner password", type="password")
                 owner_submit = st.form_submit_button("Log in")
@@ -236,25 +243,48 @@ with st.sidebar:
                     st.error("Incorrect owner password.")
 
 
-    page = st.radio("Navigation", [
-        "Dashboard",
-        "Daily Work",
-        "Projects",
-        "PPT Tracker",
-        "LinkedIn Posts",
-        "GitHub Updates",
-        "Learning",
-        "Backup"
-    ])
+# ---------- PUBLIC PAGES ----------
 
-    if st.button("🔒 Logout"):
-        st.session_state.logged_in = False
-        st.rerun()
+if page == "Home":
+    st.markdown("""
+    <div class="hero">
+      <div class="welcome">🌅 Your personal progress portfolio</div>
+      <span class="hero-kicker">Projects • PPTs • LinkedIn • GitHub • Learning</span>
+      <h1>Daily Work &amp; Achievement Tracker</h1>
+      <div class="subtitle">Track your work. Celebrate your progress. Build your future.</div>
+      <div class="quote">“A better version of myself, every day.”</div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.subheader("Welcome to my work portfolio")
+    st.write("Explore daily activities, projects, presentations, learning, GitHub updates, and achievements.")
+    all_entries = get_data()
+    a, b, c = st.columns(3)
+    a.metric("Total entries", len(all_entries))
+    b.metric("Projects", int((all_entries["category"] == "Project").sum()) if not all_entries.empty else 0)
+    c.metric("Learning entries", int((all_entries["category"] == "Learning").sum()) if not all_entries.empty else 0)
+
+elif page == "About":
+    st.markdown("""
+    <div class="hero">
+      <span class="hero-kicker">ABOUT THIS PORTFOLIO</span>
+      <h1>Consistency today, success tomorrow.</h1>
+      <div class="subtitle">A public view of daily work, learning, and achievements.</div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.subheader("About the tracker")
+    st.write("This portfolio records daily work, projects, presentations, LinkedIn posts, GitHub updates, and learning progress. Visitors can browse without logging in. Only the owner can add, edit, or delete records.")
+
+elif page == "My Work" and not is_owner:
+    st.subheader("🔐 Owner access required")
+    st.write("Visitors can explore the public portfolio. Log in as owner to manage daily work.")
+    st.info("Open Owner login in the sidebar to continue.")
+
+elif page == "My Work" and is_owner:
+    st.subheader("📝 Manage My Work")
+    st.write("Use Dashboard → Quick Add to record a new entry, or choose a category from the navigation.")
 
 
-# ---------- DASHBOARD ----------
-
-if page == "Dashboard":
+elif page == "Dashboard":
     df = get_data()
 
     today_count = (
@@ -500,5 +530,6 @@ elif page == "Backup":
         "Keep your database URL and app password private. "
         "Export backups regularly."
     )
+
 st.divider()
 st.caption("Your work. Your progress. One place.")
