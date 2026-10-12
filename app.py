@@ -69,22 +69,6 @@ if not APP_PASSWORD or not DATABASE_URL:
     st.error("Configure APP_PASSWORD and DATABASE_URL in Streamlit Secrets.")
     st.stop()
 
-if not st.session_state.get("logged_in"):
-    st.subheader("🔐 Personal Login")
-
-    with st.form("login"):
-        password = st.text_input("Enter app password", type="password")
-        submit = st.form_submit_button("Login")
-
-    if submit:
-        if password == APP_PASSWORD:
-            st.session_state.logged_in = True
-            st.rerun()
-        else:
-            st.error("Incorrect password.")
-
-    st.stop()
-
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL[len("postgres://"):]
 
